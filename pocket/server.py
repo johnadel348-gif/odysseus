@@ -162,25 +162,39 @@ settings = Settings()
 # Model catalog (auto-detect the model when none is configured)
 # --------------------------------------------------------------------------
 
-_models_cache: dict = {"ids": [], "ts": 0.0}
+_models_cache: dict = {"ids": [], "ts": 0.0, "error": ""}
 
 
 async def list_models() -> list[str]:
+    """Fetch the backend's model catalog.
+
+    The timeout is generous (15 s) on purpose: cloud catalogs like OpenRouter's
+    are large JSON documents, and phones on mobile networks need the headroom.
+    Failures are remembered so the UI can show the real reason.
+    """
+    _models_cache["error"] = ""
     if time.time() - _models_cache["ts"] < 30 and _models_cache["ids"]:
         return _models_cache["ids"]
     try:
-        async with httpx.AsyncClient(timeout=4) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15, connect=8)) as client:
             r = await client.get(
                 f"{settings.base_url}/models",
                 headers=_auth_headers(),
             )
             r.raise_for_status()
-            ids = [m.get("id", "") for m in r.json().get("data", [])]
-            _models_cache["ids"] = [i for i in ids if i]
-            _models_cache["ts"] = time.time()
-    except Exception:
+            payload = r.json()
+        # OpenAI-style {"data": [...]} — but accept a bare [...] too, since a
+        # few lightweight backends return a plain array.
+        items = payload.get("data", payload) if isinstance(payload, dict) else payload
+        ids = [m.get("id", "") for m in items if isinstance(m, dict)]
+        _models_cache["ids"] = [i for i in ids if i]
+        _models_cache["ts"] = time.time()
+        if not _models_cache["ids"]:
+            _models_cache["error"] = "backend returned an empty model list"
+    except Exception as exc:
         _models_cache["ids"] = []
         _models_cache["ts"] = 0.0
+        _models_cache["error"] = f"{type(exc).__name__}: {exc}"[:180]
     return _models_cache["ids"]
 
 
@@ -189,10 +203,17 @@ async def resolve_model() -> str:
         return settings.model
     ids = await list_models()
     if not ids:
+        detail = _models_cache.get("error") or "no response"
         raise LlmError(
-            f"No model configured and none detected at {settings.base_url}. "
-            "Install/run Ollama (or LM Studio...) or set a model in Settings."
+            f"No model available at {settings.base_url} ({detail}). "
+            "Set a model in Settings or check the backend."
         )
+    # On OpenRouter, auto-pick a free model so the zero-config default costs
+    # nothing; everywhere else the first detected model is the default.
+    if "openrouter.ai" in settings.base_url:
+        free = [i for i in ids if i.endswith(":free")]
+        if free:
+            return free[0]
     return ids[0]
 
 
@@ -636,6 +657,7 @@ async def health(request: Request):
         "backend": settings.base_url,
         "model": settings.model or (ids[0] if ids else ""),
         "models_detected": bool(ids),
+        "models_error": _models_cache.get("error", ""),
         "tools_enabled": settings.tool_mode,
         "search": ("serpapi" if (SEARCH_BACKEND in ("auto", "serpapi") and SERPAPI_KEY)
                    else "duckduckgo" if SEARCH_BACKEND != "none" else "disabled"),

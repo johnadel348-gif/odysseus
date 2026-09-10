@@ -447,7 +447,7 @@ async function testConnection() {
     out.className = "test-result " + (h.models_detected ? "ok" : "err");
     out.textContent = h.models_detected
       ? `✓ Connected — model: ${h.model || "auto"}`
-      : `✗ Server reachable, but no model detected at ${h.backend}. Is Ollama running?`;
+      : `✗ ${h.backend}: ` + (h.models_error || "no models detected — is the backend running?");
     refreshHealth();
   } catch (e) {
     out.className = "test-result err";
