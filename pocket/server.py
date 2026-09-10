@@ -851,13 +851,27 @@ async def index():
     return FileResponse(STATIC_DIR / "index.html", media_type="text/html")
 
 
+def _lan_ip() -> str:
+    """Best-effort LAN IPv4 for the startup banner (no packets are sent)."""
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))  # route lookup only — nothing is delivered
+        ip = s.getsockname()[0]
+        s.close()
+        return "" if ip.startswith("127.") else ip
+    except Exception:
+        return ""
+
+
 if __name__ == "__main__":
+    lan = _lan_ip()
+    wifi_line = f"  On Wi-Fi →  http://{lan}:{PORT}\n" if lan else ""
     print(f"""
   ⛵  Odysseus Pocket
   ─────────────────────────────────────────
   UI       →  http://localhost:{PORT}
-  On Wi-Fi →  http://<this-phone-ip>:{PORT}
-  Models   →  {DEFAULT_BASE_URL}  (Ollama, LM Studio, ... any /v1 backend)
+{wifi_line}  Models   →  {DEFAULT_BASE_URL}  (Ollama, LM Studio, ... any /v1 backend)
   Data     →  {DATA_DIR}
   ─────────────────────────────────────────
   Tip: install it from your phone's Chrome → ⋮ → "Add to Home screen".
