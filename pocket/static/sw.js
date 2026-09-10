@@ -4,7 +4,7 @@
      - static assets (/static/*):  cache-first with background refresh
      - /api/*:                     never cached — live data only
 */
-const CACHE = "pocket-v1";
+const CACHE = "pocket-v2";
 
 const SHELL = [
   "/",
