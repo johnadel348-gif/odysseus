@@ -39,7 +39,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse
+from starlette.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
@@ -525,8 +525,11 @@ async def chat_completion(messages: list, use_tools: bool) -> dict:
             "Is Ollama (or your other backend) running?"
         )
     except httpx.TimeoutException:
-        raise LlmError("The model took too long to answer. Try a smaller "
-                       "model or a shorter message.")
+        raise LlmError(
+            f"The model took longer than {CHAT_TIMEOUT_S}s to answer. Free "
+            "models on OpenRouter are often queued — try again, pick a "
+            "different free model in Settings, or raise POCKET_CHAT_TIMEOUT."
+        )
     if r.status_code == 400 and use_tools:
         # Some lightweight backends reject the "tools" parameter — retry once
         # without tools so chat still works everywhere.
@@ -544,10 +547,12 @@ async def chat_completion(messages: list, use_tools: bool) -> dict:
         raise LlmError(f"Unexpected response from model server: {r.text[:300]}")
 
 
-async def agent_turn(chat: dict, user_message: str) -> dict:
-    """One full turn: user message -> (tool rounds) -> assistant reply.
+async def agent_turn_events(chat: dict, user_message: str):
+    """One full turn as a stream of events.
 
-    Returns {"reply", "tool_events"}. Persists both messages into `chat`.
+    Yields {"type": "tool", "event": {...}} as each tool runs, then finishes
+    with {"type": "reply", ...} once the answer is ready (and persisted).
+    Raises LlmError when the backend fails.
     """
     tool_events: list[dict] = []
 
@@ -583,6 +588,7 @@ async def agent_turn(chat: dict, user_message: str) -> dict:
                 args = {}
             result, event = await run_tool(name, args)
             tool_events.append(event)
+            yield {"type": "tool", "event": event}
             messages.append({"role": "tool",
                              "tool_call_id": call.get("id", name),
                              "content": result.get("content", "") if result.get("ok")
@@ -601,7 +607,28 @@ async def agent_turn(chat: dict, user_message: str) -> dict:
     chat["updated_at"] = ts
     if len(chat["messages"]) == 2:  # first exchange -> title the chat
         chat["title"] = user_message.strip()[:60] or "New chat"
-    return {"reply": reply_content, "tool_events": tool_events}
+    yield {"type": "reply", "reply": reply_content, "tool_events": tool_events,
+           "chat_id": chat["id"], "title": chat["title"]}
+
+
+def resolve_chat_for_message(data: dict, body: dict):
+    """Find or create the target chat for a chat request.
+
+    Returns (chat, None) or (None, error_response).
+    """
+    chat_rec = None
+    if body.get("chat_id"):
+        for c in data["chats"]:
+            if c["id"] == body["chat_id"]:
+                chat_rec = c
+                break
+        if chat_rec is None:
+            return None, JSONResponse({"detail": "chat not found"}, status_code=404)
+    if chat_rec is None:
+        chat_rec = {"id": new_id(), "title": "New chat", "messages": [],
+                    "created_at": now_iso(), "updated_at": now_iso()}
+        data["chats"].insert(0, chat_rec)
+    return chat_rec, None
 
 
 # --------------------------------------------------------------------------
@@ -773,14 +800,53 @@ async def chat(request: Request):
         data["chats"].insert(0, chat_rec)
 
     await settings.refresh()
+    reply, tool_events = None, []
     try:
-        result = await agent_turn(chat_rec, user_message)
+        async for ev in agent_turn_events(chat_rec, user_message):
+            if ev["type"] == "tool":
+                tool_events.append(ev["event"])
+            else:
+                reply = ev["reply"]
+                tool_events = ev["tool_events"]
+                await chats_store.save(data)
     except LlmError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=502)
-    await chats_store.save(data)
     return JSONResponse({"chat_id": chat_rec["id"], "title": chat_rec["title"],
-                         "reply": result["reply"],
-                         "tool_events": result["tool_events"]})
+                         "reply": reply, "tool_events": tool_events})
+
+
+async def chat_stream(request: Request):
+    """Streaming variant: NDJSON events as they happen.
+
+    Lines: {"type":"tool","event":…} per tool run, then
+    {"type":"reply",…} — or {"type":"error","detail":…} on failure.
+    The UI shows live agent activity instead of a blind wait.
+    """
+    body = await request.json()
+    user_message = str(body.get("message", "")).strip()
+    if not user_message:
+        return JSONResponse({"detail": "message is required"}, status_code=400)
+
+    data = await chats_store.load()
+    chat_rec, err = resolve_chat_for_message(data, body)
+    if err:
+        return err
+
+    await settings.refresh()
+
+    async def gen():
+        try:
+            async for ev in agent_turn_events(chat_rec, user_message):
+                if ev["type"] == "reply":
+                    await chats_store.save(data)
+                yield json.dumps(ev, ensure_ascii=False) + "\n"
+        except LlmError as exc:
+            yield json.dumps({"type": "error", "detail": str(exc)},
+                             ensure_ascii=False) + "\n"
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
 
 
 # ---- notes ----
@@ -841,7 +907,7 @@ async def delete_note(request: Request):
 class NoCacheStaticFiles(StaticFiles):
     """Shell assets must revalidate so PWA updates land on next open."""
 
-    def file_response(self, *args, **kwargs):  # noqa: ANN002, ANN003
+    def file_response(self, *args, **kwargs):
         response = super().file_response(*args, **kwargs)
         response.headers["Cache-Control"] = "no-cache"
         return response
@@ -874,6 +940,7 @@ routes = [
     Route("/api/chats/{chat_id}", rename_chat, methods=["PATCH"]),
     Route("/api/chats/{chat_id}", delete_chat, methods=["DELETE"]),
     Route("/api/chat", chat, methods=["POST"]),
+    Route("/api/chat/stream", chat_stream, methods=["POST"]),
     Route("/api/notes", get_notes, methods=["GET"]),
     Route("/api/notes", create_note, methods=["POST"]),
     Route("/api/notes/{note_id}", update_note, methods=["PATCH"]),

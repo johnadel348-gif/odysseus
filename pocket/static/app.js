@@ -190,15 +190,6 @@ function scrollBottom() {
   els.chatMain.scrollTop = els.chatMain.scrollHeight;
 }
 
-function showTyping() {
-  const div = document.createElement("div");
-  div.className = "msg assistant";
-  div.id = "typingMsg";
-  div.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
-  els.messages.appendChild(div);
-  scrollBottom();
-}
-
 function showError(text) {
   const div = document.createElement("div");
   div.className = "error-bubble";
@@ -233,6 +224,37 @@ function newChat() {
   els.input.focus();
 }
 
+function authHeaders(extra = {}) {
+  const h = { ...extra };
+  const token = getToken();
+  if (token) h["Authorization"] = "Bearer " + token;
+  return h;
+}
+
+/* Live "agent at work" bubble: tool chips appear here as they run. */
+function makeActivityBubble() {
+  const div = document.createElement("div");
+  div.className = "msg assistant";
+  div.id = "activityMsg";
+  div.innerHTML = '<div class="tool-chips"></div>' +
+    '<span class="typing"><i></i><i></i><i></i></span>';
+  els.messages.appendChild(div);
+  scrollBottom();
+  return div;
+}
+
+function addActivityChip(bubble, ev) {
+  const chips = bubble.querySelector(".tool-chips");
+  const chip = document.createElement("span");
+  chip.className = "tool-chip";
+  const t = document.createElement("span");
+  t.className = "t";
+  t.textContent = `${ev.icon || "🔧"} ${ev.summary || ev.tool}`;
+  chip.appendChild(t);
+  chips.appendChild(chip);
+  scrollBottom();
+}
+
 async function send() {
   const text = els.input.value.trim();
   if (!text || state.busy) return;
@@ -244,20 +266,54 @@ async function send() {
   addMessageEl("user", text);
   state.busy = true;
   updateSendBtn();
-  showTyping();
+  const activity = makeActivityBubble();
 
   try {
-    const data = await api("/api/chat", {
+    // Preferred path: NDJSON event stream — tool chips appear live, so slow
+    // (queued/free) models no longer feel like a frozen app.
+    const res = await fetch("/api/chat/stream", {
       method: "POST",
-      body: JSON.stringify({ chat_id: state.chatId, message: text, use_tools: state.toolsOn }),
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ chat_id: state.chatId, message: text }),
     });
-    $("typingMsg")?.remove();
-    state.chatId = data.chat_id;
-    addMessageEl("assistant", data.reply, data.tool_events);
+    if (!res.ok) {
+      let detail = `request failed (${res.status})`;
+      try { const d = await res.json(); if (d.detail) detail = d.detail; } catch { /* */ }
+      throw new Error(detail);
+    }
+    if (!res.body) throw new Error("streaming unsupported — please update Chrome");
+
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        let ev;
+        try { ev = JSON.parse(line); } catch { continue; }
+        if (ev.type === "tool") {
+          addActivityChip(activity, ev.event);
+        } else if (ev.type === "reply") {
+          state.chatId = ev.chat_id;
+          activity.remove();
+          addMessageEl("assistant", ev.reply, ev.tool_events);
+        } else if (ev.type === "error") {
+          activity.remove();
+          showError(ev.detail);
+        }
+      }
+    }
+    activity.remove();
     refreshChatList();
-    refreshHealth(); // notes count may have changed
+    refreshHealth();
   } catch (e) {
-    $("typingMsg")?.remove();
+    activity.remove();
     showError(e.message);
   } finally {
     state.busy = false;
