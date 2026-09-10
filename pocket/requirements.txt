@@ -1,0 +1,4 @@
+# Odysseus Pocket — three dependencies, nothing else.
+fastapi
+uvicorn
+httpx

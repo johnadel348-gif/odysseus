@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- Android/Chrome essentials -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#282c34">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Pocket">
+  <meta name="description" content="Odysseus Pocket — AI chat with web search and notes, running on your own device.">
+  <title>Odysseus Pocket</title>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <!-- ══════════════════ App bar ══════════════════ -->
+  <header class="appbar">
+    <button id="btnMenu" class="icon-btn" aria-label="Chats">
+      <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+    <div class="brand">
+      <img src="/static/icons/icon-192.png" alt="" class="brand-icon">
+      <span class="brand-name">Odysseus <b>Pocket</b></span>
+    </div>
+    <span id="statusDot" class="status-dot" title="Checking model server…"></span>
+    <button id="btnNotes" class="icon-btn" aria-label="Notes">
+      <svg viewBox="0 0 24 24"><path d="M5 4h14v16l-3-2-2 2-2-2-2 2-2-2-3 2V4z" stroke-width="1.8" stroke-linejoin="round" fill="none"/><path d="M9 9h6M9 13h4" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </button>
+    <button id="btnSettings" class="icon-btn" aria-label="Settings">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" stroke-width="1.8" fill="none"/><path d="M12 2.8v3M12 18.2v3M21.2 12h-3M5.8 12h-3M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1M18.5 18.5l-2.1-2.1M7.6 7.6L5.5 5.5" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </button>
+  </header>
+
+  <!-- ══════════════════ Chats drawer ══════════════════ -->
+  <div id="drawerScrim" class="scrim"></div>
+  <aside id="drawer" class="drawer" aria-label="Chat history">
+    <div class="drawer-head">
+      <span>Chats</span>
+      <button id="btnNewChat" class="btn small primary">＋ New chat</button>
+    </div>
+    <div id="chatList" class="chat-list"></div>
+  </aside>
+
+  <!-- ══════════════════ Chat ══════════════════ -->
+  <main id="chatMain" class="chat-main">
+    <div id="messages" class="messages"></div>
+
+    <div id="welcome" class="welcome">
+      <img src="/static/icons/icon-512.png" alt="" class="welcome-icon">
+      <h1>Odysseus Pocket</h1>
+      <p class="muted">Your AI, on your phone — with web search and a memory of its own.</p>
+      <div class="suggestions">
+        <button class="suggestion" data-fill="What's happening in the world today? Give me 5 quick headlines.">🌍 Today's headlines</button>
+        <button class="suggestion" data-fill="Search the web for the best budget Android phone in 2026 and summarize the top pick.">🔍 Research a purchase</button>
+        <button class="suggestion" data-fill="Remember that my Wi-Fi password for the guest network is 'sailboat-2026'.">📝 Remember something</button>
+        <button class="suggestion" data-fill="What do you remember about me? Check my notes.">🧠 What's in my memory?</button>
+      </div>
+      <p class="install-hint muted">📲 Install as an app: Chrome menu <b>⋮</b> → <b>Add to Home screen</b></p>
+    </div>
+  </main>
+
+  <!-- ══════════════════ Composer ══════════════════ -->
+  <footer class="composer-wrap">
+    <div class="composer-toolbar">
+      <button id="btnTools" class="chip toggle on" title="Let the model use web search and notes">
+        <span class="chip-icon">🌐</span> Tools <span class="chip-state">on</span>
+      </button>
+      <span id="modelLabel" class="model-label muted"></span>
+    </div>
+    <div class="composer">
+      <textarea id="input" rows="1" placeholder="Message Odysseus…"
+                enterkeyhint="send" autocomplete="off"></textarea>
+      <button id="btnSend" class="send-btn" aria-label="Send" disabled>
+        <svg viewBox="0 0 24 24"><path d="M4 12L20 4l-4.5 8L20 20 4 12zm11.5 0H9" stroke-width="1.8" stroke-linejoin="round" fill="none"/></svg>
+      </button>
+    </div>
+  </footer>
+
+  <!-- ══════════════════ Notes sheet ══════════════════ -->
+  <section id="notesSheet" class="sheet" hidden aria-label="Notes">
+    <header class="sheet-head">
+      <button id="btnNotesClose" class="icon-btn" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <span class="sheet-title">Notes · memory</span>
+      <button id="btnNewNote" class="btn small primary">＋ New</button>
+    </header>
+    <input id="noteSearch" class="search-input" type="search" placeholder="Search notes…">
+    <div id="notesList" class="notes-list"></div>
+  </section>
+
+  <!-- ══════════════════ Note editor ══════════════════ -->
+  <section id="noteEditor" class="sheet" hidden aria-label="Note editor">
+    <header class="sheet-head">
+      <button id="btnNoteClose" class="icon-btn" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <span class="sheet-title">Note</span>
+      <button id="btnNoteDelete" class="icon-btn danger" aria-label="Delete note">
+        <svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 13h8l1-13M10 11v5M14 11v5" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg>
+      </button>
+      <button id="btnNoteSave" class="btn small primary">Save</button>
+    </header>
+    <input id="noteTitle" class="note-title-input" placeholder="Title" maxlength="120">
+    <textarea id="noteContent" class="note-content-input" placeholder="Write anything — the assistant can read these notes as its memory."></textarea>
+  </section>
+
+  <!-- ══════════════════ Settings sheet ══════════════════ -->
+  <section id="settingsSheet" class="sheet" hidden aria-label="Settings">
+    <header class="sheet-head">
+      <button id="btnSettingsClose" class="icon-btn" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <span class="sheet-title">Settings</span>
+      <button id="btnSettingsSave" class="btn small primary">Save</button>
+    </header>
+    <div class="settings-body">
+      <label class="field">
+        <span>Model server (any OpenAI-compatible /v1 URL)</span>
+        <input id="setBackend" type="url" placeholder="http://127.0.0.1:11434/v1">
+      </label>
+      <label class="field">
+        <span>API key <em class="muted">(blank = keep current)</em></span>
+        <input id="setApiKey" type="password" placeholder="••••••••">
+      </label>
+      <label class="field">
+        <span>Model <em class="muted">(blank = auto-detect)</em></span>
+        <input id="setModel" list="modelOptions" placeholder="e.g. llama3.2:3b">
+        <datalist id="modelOptions"></datalist>
+      </label>
+      <label class="field">
+        <span>Personal instructions (system prompt)</span>
+        <textarea id="setSystem" rows="3" placeholder="e.g. Answer in Egyptian Arabic. Be brief."></textarea>
+      </label>
+      <label class="field">
+        <span>Server access PIN <em class="muted">(only if POCKET_TOKEN is set)</em></span>
+        <input id="setToken" type="password" placeholder="stored on this device only">
+      </label>
+      <button id="btnTest" class="btn wide">Test connection</button>
+      <div id="testResult" class="test-result muted"></div>
+      <p class="settings-note muted">
+        Runs <b>Odysseus Pocket</b> — a self-hosted agent. Chats &amp; notes live
+        on the device running this server, nowhere else.
+      </p>
+    </div>
+  </section>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

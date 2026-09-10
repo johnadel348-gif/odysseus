@@ -1,0 +1,5 @@
+# local app data — never commit
+data/
+.venv/
+__pycache__/
+*.pyc
