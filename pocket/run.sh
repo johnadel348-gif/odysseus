@@ -32,4 +32,12 @@ python -m pip install $PIP_FLAGS -r requirements.txt --quiet || {
 # Keep Android from freezing the server while the screen is off (Termux only).
 command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock
 
+# Stop a previous Pocket instance that still holds the port (its cmdline is
+# "…python server.py"), otherwise the new run dies with "address already in
+# use" while the old instance keeps serving stale code.
+if pkill -f "python server.py" 2>/dev/null; then
+  echo "[pocket] stopped the previous instance…"
+  sleep 1
+fi
+
 exec python server.py
