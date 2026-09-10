@@ -1,4 +1,5 @@
-# Odysseus Pocket — three dependencies, nothing else.
-fastapi
+# Odysseus Pocket — three dependencies, all pure Python (no compiler needed,
+# which is exactly what makes them install cleanly on Termux/Android).
+starlette
 uvicorn
 httpx

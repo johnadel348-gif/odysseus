@@ -82,7 +82,8 @@ What happens on this first run:
 
 1. creates an isolated Python environment in `pocket/.venv` (Termux requires this;
    it also avoids the newer "externally managed environment" pip error),
-2. installs the only three dependencies: `fastapi`, `uvicorn`, `httpx`,
+2. installs the only three dependencies: `starlette`, `uvicorn`, `httpx`
+   (all pure Python — nothing gets compiled on the phone),
 3. grabs a wake-lock so Android doesn't freeze the server,
 4. starts the server and prints something like:
 
@@ -199,7 +200,7 @@ Windows:
 ```powershell
 cd pocket
 py -m venv .venv
-.venv\Scripts\pip install fastapi uvicorn httpx
+.venv\Scripts\pip install starlette uvicorn httpx
 .venv\Scripts\python server.py
 ```
 
@@ -273,6 +274,7 @@ stale: open it, pull down to reload, or clear the PWA's storage.
 | Symptom | Fix |
 |---|---|
 | `./run.sh: Permission denied` | `chmod +x run.sh && ./run.sh` |
+| pip fails building `pydantic-core` / mentions Rust or maturin | you have an old clone — `git pull`; Pocket now uses pure-Python deps precisely to avoid this |
 | `pkg`/`pip` network errors | check the phone's internet; retry — Termux mirrors hiccup |
 | `python: not found` | `pkg install python` |
 | Status dot stays **red** | backend not running / wrong URL → ⚙ → Test connection; on-phone Ollama needs its proot session alive |

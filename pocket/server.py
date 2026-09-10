@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Odysseus Pocket — a tiny, Android-friendly slice of the Odysseus AI workspace.
 
-One file. Three dependencies (fastapi, uvicorn, httpx). No Docker, no build step.
+One file. Three dependencies (starlette, uvicorn, httpx — all pure Python, so
+they install anywhere with no compiler: Termux/Android included). No Docker,
+no build step.
 
 What it keeps from the full Odysseus app:
   * an agent chat loop with streaming-quality OpenAI-compatible backends
@@ -33,9 +35,13 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
-from fastapi.staticfiles import StaticFiles
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import FileResponse, JSONResponse
+from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
 
 # --------------------------------------------------------------------------
 # Configuration (env vars, all optional — see .env.example / README.md)
@@ -578,19 +584,15 @@ async def agent_turn(chat: dict, user_message: str) -> dict:
 
 
 # --------------------------------------------------------------------------
-# HTTP API
+# HTTP API — pure Starlette (no pydantic, no compiler needed on Termux)
 # --------------------------------------------------------------------------
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(_app):
     await settings.refresh()
     yield
 
 
-app = FastAPI(title="Odysseus Pocket", lifespan=lifespan)
-
-
-@app.middleware("http")
 async def auth_and_security(request: Request, call_next):
     # Optional shared-secret gate for the API. Static shell stays open so the
     # PWA can load; without the token it simply can't read any data.
@@ -625,11 +627,10 @@ def _public_note(n: dict) -> dict:
             ("id", "title", "content", "tags", "created_at", "updated_at")}
 
 
-@app.get("/api/health")
-async def health():
+async def health(request: Request):
     await settings.refresh()
     ids = await list_models()
-    return {
+    return JSONResponse({
         "ok": True,
         "app": "Odysseus Pocket",
         "backend": settings.base_url,
@@ -640,28 +641,25 @@ async def health():
                    else "duckduckgo" if SEARCH_BACKEND != "none" else "disabled"),
         "chats": len((await chats_store.load())["chats"]),
         "notes": len((await notes_store.load())["notes"]),
-    }
+    })
 
 
-@app.get("/api/models")
-async def models():
-    return {"models": await list_models()}
+async def models(request: Request):
+    return JSONResponse({"models": await list_models()})
 
 
-@app.get("/api/prefs")
-async def get_prefs():
+async def get_prefs(request: Request):
     await settings.refresh()
-    return {
+    return JSONResponse({
         "backend": settings.base_url,
         "has_api_key": bool(settings.api_key),
         "model": settings.model,
         "system_prompt": settings.system_prompt,
         "tool_mode": settings.tool_mode,
         "token_required": bool(ACCESS_TOKEN),
-    }
+    })
 
 
-@app.post("/api/prefs")
 async def set_prefs(request: Request):
     body = await request.json()
     prefs = (await prefs_store.load()).get("prefs", {})
@@ -678,40 +676,39 @@ async def set_prefs(request: Request):
     await prefs_store.save(data)
     _models_cache["ts"] = 0.0  # force re-detect against the new backend
     await settings.refresh()
-    return {"ok": True, "model": settings.model, "backend": settings.base_url}
+    return JSONResponse({"ok": True, "model": settings.model,
+                         "backend": settings.base_url})
 
 
 # ---- chats ----
 
-@app.get("/api/chats")
-async def get_chats():
+async def get_chats(request: Request):
     data = await chats_store.load()
     chats = sorted(data["chats"], key=lambda c: c.get("updated_at", ""),
                    reverse=True)
-    return {"chats": [_public_chat(c) for c in chats]}
+    return JSONResponse({"chats": [_public_chat(c) for c in chats]})
 
 
-@app.post("/api/chats")
-async def create_chat():
+async def create_chat(request: Request):
     data = await chats_store.load()
     chat = {"id": new_id(), "title": "New chat", "messages": [],
             "created_at": now_iso(), "updated_at": now_iso()}
     data["chats"].insert(0, chat)
     await chats_store.save(data)
-    return {"chat": _public_chat(chat, include_messages=True)}
+    return JSONResponse({"chat": _public_chat(chat, include_messages=True)})
 
 
-@app.get("/api/chats/{chat_id}")
-async def get_chat(chat_id: str):
+async def get_chat(request: Request):
+    chat_id = request.path_params["chat_id"]
     data = await chats_store.load()
     for c in data["chats"]:
         if c["id"] == chat_id:
-            return {"chat": _public_chat(c, include_messages=True)}
+            return JSONResponse({"chat": _public_chat(c, include_messages=True)})
     return JSONResponse({"detail": "chat not found"}, status_code=404)
 
 
-@app.patch("/api/chats/{chat_id}")
-async def rename_chat(chat_id: str, request: Request):
+async def rename_chat(request: Request):
+    chat_id = request.path_params["chat_id"]
     body = await request.json()
     data = await chats_store.load()
     for c in data["chats"]:
@@ -719,20 +716,19 @@ async def rename_chat(chat_id: str, request: Request):
             if body.get("title"):
                 c["title"] = str(body["title"]).strip()[:80]
             await chats_store.save(data)
-            return {"chat": _public_chat(c)}
+            return JSONResponse({"chat": _public_chat(c)})
     return JSONResponse({"detail": "chat not found"}, status_code=404)
 
 
-@app.delete("/api/chats/{chat_id}")
-async def delete_chat(chat_id: str):
+async def delete_chat(request: Request):
+    chat_id = request.path_params["chat_id"]
     data = await chats_store.load()
     before = len(data["chats"])
     data["chats"] = [c for c in data["chats"] if c["id"] != chat_id]
     await chats_store.save(data)
-    return {"ok": len(data["chats"]) < before}
+    return JSONResponse({"ok": len(data["chats"]) < before})
 
 
-@app.post("/api/chat")
 async def chat(request: Request):
     """The main agent endpoint."""
     body = await request.json()
@@ -760,24 +756,24 @@ async def chat(request: Request):
     except LlmError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=502)
     await chats_store.save(data)
-    return {"chat_id": chat_rec["id"], "title": chat_rec["title"],
-            "reply": result["reply"], "tool_events": result["tool_events"]}
+    return JSONResponse({"chat_id": chat_rec["id"], "title": chat_rec["title"],
+                         "reply": result["reply"],
+                         "tool_events": result["tool_events"]})
 
 
 # ---- notes ----
 
-@app.get("/api/notes")
-async def get_notes(q: str = ""):
+async def get_notes(request: Request):
+    q = request.query_params.get("q", "")
     data = await notes_store.load()
     notes = data["notes"]
     if q:
         ql = q.lower()
         notes = [n for n in notes
                  if ql in n["title"].lower() or ql in n["content"].lower()]
-    return {"notes": [_public_note(n) for n in notes]}
+    return JSONResponse({"notes": [_public_note(n) for n in notes]})
 
 
-@app.post("/api/notes")
 async def create_note(request: Request):
     body = await request.json()
     res = await note_create(str(body.get("title", "")),
@@ -786,11 +782,11 @@ async def create_note(request: Request):
         return JSONResponse({"detail": "could not save note"}, status_code=500)
     data = await notes_store.load()
     note = next(n for n in data["notes"] if n["id"] == res["id"])
-    return {"note": _public_note(note)}
+    return JSONResponse({"note": _public_note(note)})
 
 
-@app.patch("/api/notes/{note_id}")
-async def update_note(note_id: str, request: Request):
+async def update_note(request: Request):
+    note_id = request.path_params["note_id"]
     body = await request.json()
     data = await notes_store.load()
     for n in data["notes"]:
@@ -803,17 +799,17 @@ async def update_note(note_id: str, request: Request):
                 n["tags"] = [str(t)[:30] for t in body["tags"][:10]]
             n["updated_at"] = now_iso()
             await notes_store.save(data)
-            return {"note": _public_note(n)}
+            return JSONResponse({"note": _public_note(n)})
     return JSONResponse({"detail": "note not found"}, status_code=404)
 
 
-@app.delete("/api/notes/{note_id}")
-async def delete_note(note_id: str):
+async def delete_note(request: Request):
+    note_id = request.path_params["note_id"]
     data = await notes_store.load()
     before = len(data["notes"])
     data["notes"] = [n for n in data["notes"] if n["id"] != note_id]
     await notes_store.save(data)
-    return {"ok": len(data["notes"]) < before}
+    return JSONResponse({"ok": len(data["notes"]) < before})
 
 
 # --------------------------------------------------------------------------
@@ -829,26 +825,48 @@ class NoCacheStaticFiles(StaticFiles):
         return response
 
 
-app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
-
-
-@app.get("/sw.js", include_in_schema=False)
-async def service_worker():
+async def service_worker(request: Request):
     response = FileResponse(STATIC_DIR / "sw.js", media_type="text/javascript")
     response.headers["Cache-Control"] = "no-cache"
     response.headers["Service-Worker-Allowed"] = "/"  # scope the whole origin
     return response
 
 
-@app.get("/favicon.ico", include_in_schema=False)
-async def favicon():
+async def favicon(request: Request):
     return FileResponse(STATIC_DIR / "icons" / "icon-192.png",
                         media_type="image/png")
 
 
-@app.get("/", include_in_schema=False)
-async def index():
+async def index(request: Request):
     return FileResponse(STATIC_DIR / "index.html", media_type="text/html")
+
+
+routes = [
+    Route("/api/health", health, methods=["GET"]),
+    Route("/api/models", models, methods=["GET"]),
+    Route("/api/prefs", get_prefs, methods=["GET"]),
+    Route("/api/prefs", set_prefs, methods=["POST"]),
+    Route("/api/chats", get_chats, methods=["GET"]),
+    Route("/api/chats", create_chat, methods=["POST"]),
+    Route("/api/chats/{chat_id}", get_chat, methods=["GET"]),
+    Route("/api/chats/{chat_id}", rename_chat, methods=["PATCH"]),
+    Route("/api/chats/{chat_id}", delete_chat, methods=["DELETE"]),
+    Route("/api/chat", chat, methods=["POST"]),
+    Route("/api/notes", get_notes, methods=["GET"]),
+    Route("/api/notes", create_note, methods=["POST"]),
+    Route("/api/notes/{note_id}", update_note, methods=["PATCH"]),
+    Route("/api/notes/{note_id}", delete_note, methods=["DELETE"]),
+    Route("/", index, methods=["GET"]),
+    Route("/sw.js", service_worker, methods=["GET"]),
+    Route("/favicon.ico", favicon, methods=["GET"]),
+    Mount("/static", app=NoCacheStaticFiles(directory=STATIC_DIR), name="static"),
+]
+
+app = Starlette(
+    routes=routes,
+    lifespan=lifespan,
+    middleware=[Middleware(BaseHTTPMiddleware, dispatch=auth_and_security)],
+)
 
 
 def _lan_ip() -> str:

@@ -81,7 +81,7 @@ Also disable battery optimization for Termux (Android Settings → Apps → Term
 ```bash
 cd pocket
 ./run.sh                 # Linux / macOS
-# or: python server.py  (after: pip install fastapi uvicorn httpx)
+# or: python server.py  (after: pip install starlette uvicorn httpx)
 ```
 
 Open `http://localhost:8000`, or `http://<device-ip>:8000` from your phone's browser —
@@ -143,7 +143,7 @@ Or set defaults in the environment / `.env`: see [`.env.example`](.env.example).
 pocket/
 ├── server.py              ← the whole backend: API + agent loop + tools
 ├── run.sh                 ← one-command launcher (venv + deps + start)
-├── requirements.txt       ← fastapi, uvicorn, httpx — that's all
+├── requirements.txt       ← starlette, uvicorn, httpx — pure Python, no compiler
 ├── .env.example           ← every setting, documented
 ├── static/
 │   ├── index.html         ← single-screen app shell

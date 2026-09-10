@@ -1,5 +1,5 @@
 /* Odysseus Pocket — frontend logic. No framework, no build step.
-   Talks to the single-file FastAPI server in ../server.py */
+   Talks to the single-file Starlette server in ../server.py */
 
 "use strict";
 
